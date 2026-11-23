@@ -1,0 +1,261 @@
+// This is your Prisma schema file
+// Learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AUTHENTICATION
+// ─────────────────────────────────────────────────────────────────────────────
+
+model NewtonSession {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  sessionToken String   @unique
+  cookieData   String   // JSON-serialized cookies
+  isActive     Boolean  @default(true)
+  expiresAt    DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SUBJECTS (Courses)
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Subject {
+  id               String          @id @default(cuid())
+  externalId       String          @unique  // Newton's course ID
+  name             String
+  code             String?         // e.g., "ASD", "DE"
+  courseUrl        String
+  description      String?
+  imageUrl         String?
+  discoveryStatus  String          @default("DISCOVERED")
+  lastScannedAt    DateTime?
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  assignments      Assignment[]
+  batchAssignments BatchAssignment[]
+  stats            SubjectStats?
+
+  @@index([externalId])
+  @@index([discoveryStatus])
+}
+
+model SubjectStats {
+  id                 String   @id @default(cuid())
+  subjectId          String   @unique
+  assignmentsCount   Int      @default(0)
+  questionsCount     Int      @default(0)
+  solutionsGenerated Int      @default(0)
+  validationPassed   Int      @default(0)
+  pendingReview      Int      @default(0)
+  failed             Int      @default(0)
+  updatedAt          DateTime @updatedAt
+
+  subject Subject @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ASSIGNMENTS
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Assignment {
+  id               String           @id @default(cuid())
+  externalId       String           // Newton's assignment ID
+  subjectId        String
+  title            String
+  assignmentUrl    String
+  description      String?
+  dueDate          DateTime?
+  processingStatus String           @default("NOT_PROCESSED")
+  discoveredAt     DateTime         @default(now())
+  lastProcessedAt  DateTime?
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  subject          Subject          @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  questions        Question[]
+  batchAssignments BatchAssignment[]
+
+  @@unique([subjectId, externalId])
+  @@index([subjectId])
+  @@index([processingStatus])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// QUESTIONS
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Question {
+  id               String          @id @default(cuid())
+  externalId       String          // Newton's question ID
+  assignmentId     String
+  title            String
+  description      String          // Full problem statement
+  contentHash      String          // SHA-256 of content to detect duplicates
+  inputFormat      String?
+  outputFormat     String?
+  constraints      String?
+  sampleInput      String?
+  sampleOutput     String?
+  language         String?         // "python", "javascript", "java", etc.
+  difficulty       String?
+  questionUrl      String
+  processingStatus String          @default("DISCOVERED")
+  discoveredAt     DateTime        @default(now())
+  lastProcessedAt  DateTime?
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  assignment       Assignment      @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  solutions        Solution[]
+  testCases        TestCase[]
+  processingJobs   ProcessingJob[]
+
+  @@unique([assignmentId, externalId])
+  @@unique([contentHash])
+  @@index([assignmentId])
+  @@index([processingStatus])
+  @@index([contentHash])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SOLUTIONS
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Solution {
+  id              String          @id @default(cuid())
+  questionId      String
+  code            String
+  language        String
+  explanation     String?
+  timeComplexity  String?
+  spaceComplexity String?
+  aiModel         String?
+  promptVersion   String?
+  validationStatus String         @default("PENDING")
+  validationOutput String?
+  passedTestCases  Int            @default(0)
+  totalTestCases   Int            @default(0)
+  executionTimeMs  Int?
+  isPreferred      Boolean        @default(false)
+  version          Int            @default(1)
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  question         Question       @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@index([questionId])
+  @@index([validationStatus])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TEST CASES
+// ─────────────────────────────────────────────────────────────────────────────
+
+model TestCase {
+  id          String       @id @default(cuid())
+  questionId  String
+  input       String
+  expected    String
+  isPublic    Boolean      @default(false)  // from Newton vs AI-generated
+  source      String       @default("ai")   // "newton" | "ai" | "manual"
+  createdAt   DateTime     @default(now())
+
+  question    Question     @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@index([questionId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BATCH PROCESSING
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Batch {
+  id               String        @id @default(cuid())
+  name             String
+  status           String        @default("PENDING")
+  totalAssignments Int           @default(0)
+  totalQuestions   Int           @default(0)
+  processedCount   Int           @default(0)
+  failedCount      Int           @default(0)
+  config           String?       // JSON: concurrency settings, AI model, etc.
+  startedAt        DateTime?
+  completedAt      DateTime?
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  assignments      BatchAssignment[]
+  jobs             ProcessingJob[]
+
+  @@index([status])
+}
+
+model BatchAssignment {
+  id           String     @id @default(cuid())
+  batchId      String
+  assignmentId String
+  subjectId    String
+  status       String     @default("PENDING")
+  processedAt  DateTime?
+  createdAt    DateTime   @default(now())
+
+  batch        Batch      @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  assignment   Assignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  subject      Subject    @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+
+  @@unique([batchId, assignmentId])
+  @@index([batchId])
+  @@index([assignmentId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PROCESSING JOBS (Queue)
+// ─────────────────────────────────────────────────────────────────────────────
+
+model ProcessingJob {
+  id            String     @id @default(cuid())
+  batchId       String?
+  questionId    String
+  stage         String     @default("QUEUED")
+  status        String     @default("PENDING")
+  retryCount    Int        @default(0)
+  maxRetries    Int        @default(3)
+  priority      Int        @default(5)
+  errorMessage  String?
+  errorDetails  String?    // JSON
+  startedAt     DateTime?
+  completedAt   DateTime?
+  nextRetryAt   DateTime?
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  batch         Batch?     @relation(fields: [batchId], references: [id], onDelete: SetNull)
+  question      Question   @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@index([batchId])
+  @@index([questionId])
+  @@index([status])
+  @@index([stage])
+  @@index([priority])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SETTINGS
+// ─────────────────────────────────────────────────────────────────────────────
+
+model AppSettings {
+  id    String @id @default("default")
+  data  String // JSON blob for all settings
+
+  updatedAt DateTime @updatedAt
+}
