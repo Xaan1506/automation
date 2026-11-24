@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { isAssignmentStatus, AssignmentStatus } from '@/lib/constants';
+import { isAssignmentStatus } from '@/lib/constants';
+import { NewtonPortalError, scanNewtonSubject } from '@/lib/newton-portal';
+
+export const runtime = 'nodejs';
+export const maxDuration = 300;
 
 /**
  * GET /api/assignments - List assignments (optionally filtered by subject)
@@ -38,90 +42,29 @@ export async function GET(request: NextRequest) {
 }
 
 /**
- * POST /api/assignments - Trigger assignment discovery for a subject
+ * POST /api/assignments - Scan a Newton section through the authenticated portal
  */
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const { subjectId } = body;
 
-    if (!subjectId) {
+    if (typeof subjectId !== 'string' || !subjectId) {
       return NextResponse.json({ error: 'subjectId is required' }, { status: 400 });
     }
 
-    const subject = await prisma.subject.findUnique({ where: { id: subjectId } });
-    if (!subject) {
-      return NextResponse.json({ error: 'Subject not found' }, { status: 404 });
-    }
-
-    const session = await prisma.newtonSession.findFirst({
-      where: { isActive: true },
-      orderBy: { updatedAt: 'desc' },
+    const result = await scanNewtonSubject(subjectId);
+    return NextResponse.json({
+      discovered: result.assignmentsFound,
+      questions: result.questionsFound,
+      warnings: result.warnings,
+      message: `Scanned ${result.assignmentsFound} assignment groups and ${result.questionsFound} questions`,
     });
-
-    if (!session) {
-      return NextResponse.json({ error: 'No active session' }, { status: 401 });
-    }
-
-    const cookies = JSON.parse(session.cookieData);
-    const cookieHeader = cookies
-      .map((c: { name: string; value: string }) => `${c.name}=${c.value}`)
-      .join('; ');
-
-    const NEWTON_BASE_URL = process.env.NEWTON_BASE_URL || 'https://learn.newtonschool.co';
-    
-    const endpoints = [
-      `${NEWTON_BASE_URL}/api/v1/courses/${subject.externalId}/assignments`,
-      `${NEWTON_BASE_URL}/api/v1/assignments?course_id=${subject.externalId}`,
-      `${NEWTON_BASE_URL}/api/assignments?course=${subject.externalId}`,
-    ];
-
-    let discovered = 0;
-
-    for (const endpoint of endpoints) {
-      try {
-        const response = await fetch(endpoint, {
-          headers: {
-            Cookie: cookieHeader,
-            Accept: 'application/json',
-          },
-          signal: AbortSignal.timeout(10000),
-        });
-
-        if (!response.ok) continue;
-
-        const data = await response.json();
-        const items = Array.isArray(data)
-          ? data
-          : (data.data || data.results || data.assignments || []);
-
-        for (const item of items) {
-          const id = String(item.id || item._id || '');
-          const title = String(item.title || item.name || `Assignment ${id}`);
-          if (!id) continue;
-
-          await prisma.assignment.upsert({
-            where: { subjectId_externalId: { subjectId, externalId: id } },
-            create: {
-              externalId: id,
-              subjectId,
-              title,
-              assignmentUrl: String(item.url || `${NEWTON_BASE_URL}/assignment/${id}`),
-              description: String(item.description || ''),
-              processingStatus: AssignmentStatus.NOT_PROCESSED,
-            },
-            update: { title, updatedAt: new Date() },
-          });
-          discovered++;
-        }
-        if (discovered > 0) break;
-      } catch {
-        continue;
-      }
-    }
-
-    return NextResponse.json({ discovered, message: `Found ${discovered} assignments` });
-  } catch (err) {
-    return NextResponse.json({ error: String(err) }, { status: 500 });
+  } catch (error) {
+    const message = error instanceof NewtonPortalError
+      ? error.message
+      : 'Newton assignment scan failed. Retry the section scan.';
+    const status = /session/i.test(message) ? 401 : 502;
+    return NextResponse.json({ error: message }, { status });
   }
 }

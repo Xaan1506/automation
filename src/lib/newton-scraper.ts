@@ -5,6 +5,9 @@
 
 import { prisma } from '@/lib/prisma';
 import crypto from 'crypto';
+import { chmod, readFile, writeFile } from 'fs/promises';
+import path from 'path';
+import type { BrowserContext } from 'playwright';
 import {
   SubjectStatus,
   AssignmentStatus,
@@ -12,13 +15,76 @@ import {
   ValidationStatus,
 } from '@/lib/constants';
 
-const NEWTON_BASE_URL = process.env.NEWTON_BASE_URL || 'https://learn.newtonschool.co';
+const SESSION_KEY_PATH = path.join(process.cwd(), '.newton-session-key');
+type NewtonStorageState = Awaited<ReturnType<BrowserContext['storageState']>>;
+let sessionEncryptionKey: Buffer | undefined;
+
+async function getSessionEncryptionKey(): Promise<Buffer> {
+  if (sessionEncryptionKey) return sessionEncryptionKey;
+
+  try {
+    sessionEncryptionKey = await readFile(SESSION_KEY_PATH);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+
+    const newKey = crypto.randomBytes(32);
+    try {
+      await writeFile(SESSION_KEY_PATH, newKey, { flag: 'wx', mode: 0o600 });
+      sessionEncryptionKey = newKey;
+    } catch (writeError) {
+      if ((writeError as NodeJS.ErrnoException).code !== 'EEXIST') throw writeError;
+      sessionEncryptionKey = await readFile(SESSION_KEY_PATH);
+    }
+  }
+
+  if (sessionEncryptionKey.length !== 32) {
+    throw new Error('Newton session encryption key has an invalid length');
+  }
+
+  await chmod(SESSION_KEY_PATH, 0o600);
+  return sessionEncryptionKey;
+}
+
+async function encryptSessionState(state: NewtonStorageState): Promise<string> {
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', await getSessionEncryptionKey(), iv);
+  const ciphertext = Buffer.concat([cipher.update(JSON.stringify(state)), cipher.final()]);
+  return `v1:${Buffer.concat([iv, cipher.getAuthTag(), ciphertext]).toString('base64')}`;
+}
+
+async function decryptSessionState(value: string): Promise<NewtonStorageState | null> {
+  if (!value.startsWith('v1:')) return null;
+
+  const payload = Buffer.from(value.slice(3), 'base64');
+  if (payload.length < 29) throw new Error('Stored Newton session is invalid');
+
+  const iv = payload.subarray(0, 12);
+  const tag = payload.subarray(12, 28);
+  const ciphertext = payload.subarray(28);
+  const decipher = crypto.createDecipheriv('aes-256-gcm', await getSessionEncryptionKey(), iv);
+  decipher.setAuthTag(tag);
+  const plaintext = Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString('utf8');
+  const state = JSON.parse(plaintext) as NewtonStorageState;
+
+  if (!Array.isArray(state.cookies)) {
+    throw new Error('Stored Newton session has an invalid format');
+  }
+  return state;
+}
+
+export function getNewtonCookieHeader(state: NewtonStorageState): string {
+  return state.cookies
+    .filter((cookie) => cookie.domain.replace(/^\./, '').endsWith('newtonschool.co'))
+    .map((cookie) => `${cookie.name}=${cookie.value}`)
+    .join('; ');
+}
 
 export interface ScrapedSubject {
   externalId: string;
   name: string;
   code?: string;
   courseUrl: string;
+  portalCourseId?: string;
   description?: string;
   imageUrl?: string;
 }
@@ -27,6 +93,10 @@ export interface ScrapedAssignment {
   externalId: string;
   title: string;
   assignmentUrl: string;
+  sectionName?: string;
+  groupType?: string;
+  releaseLabel?: string;
+  deadlineLabel?: string;
   description?: string;
   dueDate?: Date;
 }
@@ -42,6 +112,12 @@ export interface ScrapedQuestion {
   sampleOutput?: string;
   language?: string;
   difficulty?: string;
+  portalStatus?: string;
+  scoreLabel?: string;
+  topics?: string[];
+  solvedByLabel?: string;
+  examples?: string;
+  starterCode?: string;
   questionUrl: string;
 }
 
@@ -50,20 +126,21 @@ function hashContent(content: string): string {
 }
 
 /**
- * Save Newton session cookies to database
+ * Save an encrypted Playwright storage state to the database
  */
-export async function saveSession(email: string, cookies: object[]): Promise<string> {
+export async function saveSession(email: string, state: NewtonStorageState): Promise<string> {
   const token = crypto.randomUUID();
+  const cookieData = await encryptSessionState(state);
   const session = await prisma.newtonSession.upsert({
     where: { email },
     create: {
       email,
       sessionToken: token,
-      cookieData: JSON.stringify(cookies),
+      cookieData,
       isActive: true,
     },
     update: {
-      cookieData: JSON.stringify(cookies),
+      cookieData,
       isActive: true,
       updatedAt: new Date(),
     },
@@ -74,16 +151,19 @@ export async function saveSession(email: string, cookies: object[]): Promise<str
 /**
  * Load saved Newton session
  */
-export async function loadSession(email: string): Promise<object[] | null> {
+export async function loadSession(email: string): Promise<NewtonStorageState | null> {
   const session = await prisma.newtonSession.findUnique({
     where: { email, isActive: true },
   });
   if (!session) return null;
-  try {
-    return JSON.parse(session.cookieData);
-  } catch {
-    return null;
+  const state = await decryptSessionState(session.cookieData);
+  if (!state && !session.cookieData.startsWith('v1:')) {
+    await prisma.newtonSession.updateMany({
+      where: { email, isActive: true },
+      data: { isActive: false, cookieData: '' },
+    });
   }
+  return state;
 }
 
 /**
@@ -120,6 +200,7 @@ export async function upsertSubject(subject: ScrapedSubject) {
       name: subject.name,
       code: subject.code,
       courseUrl: subject.courseUrl,
+      portalCourseId: subject.portalCourseId,
       description: subject.description,
       imageUrl: subject.imageUrl,
       updatedAt: new Date(),
@@ -147,6 +228,10 @@ export async function upsertAssignment(subjectId: string, assignment: ScrapedAss
     update: {
       title: assignment.title,
       assignmentUrl: assignment.assignmentUrl,
+      sectionName: assignment.sectionName,
+      groupType: assignment.groupType,
+      releaseLabel: assignment.releaseLabel,
+      deadlineLabel: assignment.deadlineLabel,
       description: assignment.description,
       dueDate: assignment.dueDate,
       updatedAt: new Date(),
@@ -159,6 +244,7 @@ export async function upsertAssignment(subjectId: string, assignment: ScrapedAss
  */
 export async function upsertQuestion(assignmentId: string, question: ScrapedQuestion) {
   const contentHash = hashContent(question.description + question.title);
+  const { topics, ...questionData } = question;
 
   return prisma.question.upsert({
     where: {
@@ -168,8 +254,9 @@ export async function upsertQuestion(assignmentId: string, question: ScrapedQues
       },
     },
     create: {
-      ...question,
+      ...questionData,
       assignmentId,
+      topics: topics ? JSON.stringify(topics) : undefined,
       contentHash,
       processingStatus: QuestionStatus.DISCOVERED,
     },
@@ -183,6 +270,12 @@ export async function upsertQuestion(assignmentId: string, question: ScrapedQues
       sampleOutput: question.sampleOutput,
       language: question.language,
       difficulty: question.difficulty,
+      portalStatus: question.portalStatus,
+      scoreLabel: question.scoreLabel,
+      topics: topics ? JSON.stringify(topics) : undefined,
+      solvedByLabel: question.solvedByLabel,
+      examples: question.examples,
+      starterCode: question.starterCode,
       contentHash,
       updatedAt: new Date(),
     },
@@ -250,147 +343,3 @@ export async function refreshSubjectStats(subjectId: string): Promise<void> {
   });
 }
 
-/**
- * Parse Newton API responses to extract subjects
- * Newton may expose courses via JSON API or HTML pages
- */
-export function parseSubjectsFromApiResponse(data: unknown): ScrapedSubject[] {
-  const subjects: ScrapedSubject[] = [];
-
-  if (!data || typeof data !== 'object') return subjects;
-
-  const anyData = data as Record<string, unknown>;
-
-  // Handle array response
-  if (Array.isArray(data)) {
-    for (const item of data) {
-      const s = parseSubjectItem(item as Record<string, unknown>);
-      if (s) subjects.push(s);
-    }
-    return subjects;
-  }
-
-  // Handle paginated response
-  if (anyData.data && Array.isArray(anyData.data)) {
-    for (const item of anyData.data as Record<string, unknown>[]) {
-      const s = parseSubjectItem(item);
-      if (s) subjects.push(s);
-    }
-    return subjects;
-  }
-
-  // Handle results wrapper
-  if (anyData.results && Array.isArray(anyData.results)) {
-    for (const item of anyData.results as Record<string, unknown>[]) {
-      const s = parseSubjectItem(item);
-      if (s) subjects.push(s);
-    }
-    return subjects;
-  }
-
-  return subjects;
-}
-
-function parseSubjectItem(item: Record<string, unknown>): ScrapedSubject | null {
-  if (!item) return null;
-
-  const id = String(item.id || item._id || item.course_id || item.courseId || '');
-  const name = String(item.name || item.title || item.course_name || item.courseName || '');
-
-  if (!id || !name) return null;
-
-  const url = String(
-    item.url || item.course_url || item.courseUrl ||
-    item.link || `${NEWTON_BASE_URL}/course/${id}`
-  );
-
-  // Extract course code from name (e.g., "Advanced Software Development (ASD)" → "ASD")
-  const codeMatch = name.match(/\(([A-Z]{2,10})\)/);
-
-  return {
-    externalId: id,
-    name: name.replace(/\s*\([A-Z]{2,10}\)\s*$/, '').trim() || name,
-    code: codeMatch ? codeMatch[1] : undefined,
-    courseUrl: url,
-    description: String(item.description || item.about || ''),
-    imageUrl: String(item.image || item.thumbnail || item.banner || ''),
-  };
-}
-
-export function parseAssignmentsFromApiResponse(data: unknown): ScrapedAssignment[] {
-  const assignments: ScrapedAssignment[] = [];
-  if (!data || !Array.isArray(data)) {
-    const anyData = data as Record<string, unknown>;
-    if (anyData?.data && Array.isArray(anyData.data)) {
-      return parseAssignmentsList(anyData.data as Record<string, unknown>[]);
-    }
-    return assignments;
-  }
-  return parseAssignmentsList(data as Record<string, unknown>[]);
-}
-
-function parseAssignmentsList(items: Record<string, unknown>[]): ScrapedAssignment[] {
-  return items.map((item) => {
-    const id = String(item.id || item._id || item.assignment_id || '');
-    const title = String(item.title || item.name || item.assignment_title || `Assignment ${id}`);
-    const url = String(
-      item.url || item.assignment_url || item.link ||
-      `${NEWTON_BASE_URL}/assignment/${id}`
-    );
-    return {
-      externalId: id,
-      title,
-      assignmentUrl: url,
-      description: String(item.description || ''),
-      dueDate: item.due_date ? new Date(String(item.due_date)) : undefined,
-    };
-  }).filter((a) => a.externalId);
-}
-
-export function parseQuestionsFromApiResponse(data: unknown): ScrapedQuestion[] {
-  const questions: ScrapedQuestion[] = [];
-  if (!data) return questions;
-
-  const items = Array.isArray(data)
-    ? data
-    : (data as Record<string, unknown>).data
-    ? (data as Record<string, unknown>).data as unknown[]
-    : [];
-
-  for (const item of items) {
-    const q = parseQuestionItem(item as Record<string, unknown>);
-    if (q) questions.push(q);
-  }
-  return questions;
-}
-
-function parseQuestionItem(item: Record<string, unknown>): ScrapedQuestion | null {
-  if (!item) return null;
-
-  const id = String(item.id || item._id || item.question_id || '');
-  const title = String(item.title || item.name || item.question_title || '');
-  const description = String(
-    item.description || item.problem_statement || item.content || item.body || ''
-  );
-
-  if (!id || !description) return null;
-
-  const url = String(
-    item.url || item.question_url || item.link ||
-    `${NEWTON_BASE_URL}/question/${id}`
-  );
-
-  return {
-    externalId: id,
-    title: title || `Question ${id}`,
-    description,
-    inputFormat: String(item.input_format || item.inputFormat || ''),
-    outputFormat: String(item.output_format || item.outputFormat || ''),
-    constraints: String(item.constraints || ''),
-    sampleInput: String(item.sample_input || item.sampleInput || item.example_input || ''),
-    sampleOutput: String(item.sample_output || item.sampleOutput || item.example_output || ''),
-    language: String(item.language || item.programming_language || ''),
-    difficulty: String(item.difficulty || item.level || ''),
-    questionUrl: url,
-  };
-}

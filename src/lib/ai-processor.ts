@@ -1,17 +1,11 @@
 /**
- * AI Solution Generator using OpenAI
+ * AI solution generation using OpenAI-compatible APIs
  */
 
-import OpenAI from 'openai';
 import { prisma } from '@/lib/prisma';
 import type { Question, TestCase } from '@prisma/client';
 import { QuestionStatus, ValidationStatus } from '@/lib/constants';
-
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
-
-const AI_MODEL = process.env.AI_MODEL || 'gpt-4o';
+import { getAIClient, getAIModel } from '@/lib/ai-client';
 const MAX_TOKENS = parseInt(process.env.AI_MAX_TOKENS || '4096');
 
 export interface GeneratedSolution {
@@ -34,9 +28,10 @@ export async function generateSolution(
   question: Question & { testCases?: TestCase[] }
 ): Promise<GeneratedSolution> {
   const prompt = buildSolutionPrompt(question);
+  const openai = getAIClient();
 
   const completion = await openai.chat.completions.create({
-    model: AI_MODEL,
+    model: getAIModel(),
     max_tokens: MAX_TOKENS,
     temperature: 0.3,
     messages: [
@@ -144,8 +139,9 @@ Respond with JSON:
   ]
 }`;
 
+  const openai = getAIClient();
   const completion = await openai.chat.completions.create({
-    model: AI_MODEL,
+    model: getAIModel(),
     max_tokens: 2048,
     temperature: 0.7,
     messages: [
@@ -214,8 +210,9 @@ Respond with JSON:
 }`;
 
   try {
+    const openai = getAIClient();
     const completion = await openai.chat.completions.create({
-      model: AI_MODEL,
+      model: getAIModel(),
       max_tokens: 2048,
       temperature: 0,
       messages: [
@@ -294,7 +291,7 @@ export async function processQuestion(questionId: string): Promise<void> {
         explanation: solution.explanation,
         timeComplexity: solution.timeComplexity,
         spaceComplexity: solution.spaceComplexity,
-        aiModel: AI_MODEL,
+        aiModel: getAIModel(),
         validationStatus: ValidationStatus.PENDING,
         isPreferred: true,
       },

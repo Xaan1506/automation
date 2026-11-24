@@ -10,6 +10,7 @@ build/
 .env
 .env.*
 !.env.example
+.newton-session-key
 
 # Prisma local database
 prisma/*.db

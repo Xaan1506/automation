@@ -5,26 +5,22 @@ import { useRouter } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Settings, Key, Globe, Cpu, Sliders, CheckCircle2, AlertTriangle, LogIn } from "lucide-react";
+import { Globe, Cpu, Sliders, CheckCircle2, AlertTriangle, LogIn } from "lucide-react";
 import toast from "react-hot-toast";
+import { DEFAULT_NEWTON_BASE_URL } from "@/lib/newton-defaults";
 
 export function SettingsPage() {
   const router = useRouter();
   const [settings, setSettings] = useState({
     newtonEmail: "",
-    newtonPassword: "",
-    newtonBaseUrl: "https://learn.newtonschool.co",
-    cookieJson: "",
-    aiModel: "gpt-4o",
-    openaiApiKey: "",
+    newtonBaseUrl: DEFAULT_NEWTON_BASE_URL,
+    aiModel: "llama-3.3-70b-versatile",
     maxConcurrentAI: 3,
     maxConcurrentBrowser: 2,
     maxRetries: 3,
   });
 
   const [saving, setSaving] = useState(false);
-  const [loggingIn, setLoggingIn] = useState(false);
-  const [importingCookie, setImportingCookie] = useState(false);
   const [authStatus, setAuthStatus] = useState<{
     authenticated: boolean;
     session: { email: string; updatedAt: string } | null;
@@ -74,67 +70,6 @@ export function SettingsPage() {
     }
   };
 
-  const handleNewtonLogin = async () => {
-    if (!settings.newtonEmail || !settings.newtonPassword) {
-      toast.error("Please enter both email and password");
-      return;
-    }
-
-    setLoggingIn(true);
-    try {
-      const res = await fetch("/api/auth/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          email: settings.newtonEmail,
-          password: settings.newtonPassword,
-        }),
-      });
-      const data = await res.json();
-      if (data.success) {
-        toast.success("Successfully authenticated with Newton School!");
-        fetchAuth();
-      } else {
-        toast.error(data.error || "Login failed");
-      }
-    } catch (err) {
-      toast.error("Login request failed");
-    } finally {
-      setLoggingIn(false);
-    }
-  };
-
-  const handleImportCookies = async () => {
-    if (!settings.newtonEmail || !settings.cookieJson) {
-      toast.error("Provide email and JSON cookies array");
-      return;
-    }
-
-    setImportingCookie(true);
-    try {
-      const parsedCookies = JSON.parse(settings.cookieJson);
-      const res = await fetch("/api/auth/session", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          email: settings.newtonEmail,
-          cookies: parsedCookies,
-        }),
-      });
-      const data = await res.json();
-      if (data.success) {
-        toast.success("Browser cookies imported successfully!");
-        fetchAuth();
-      } else {
-        toast.error(data.error || "Import failed");
-      }
-    } catch {
-      toast.error("Invalid cookies JSON");
-    } finally {
-      setImportingCookie(false);
-    }
-  };
-
   const handleLogout = async () => {
     try {
       await fetch("/api/auth/login", { method: "DELETE" });
@@ -149,7 +84,7 @@ export function SettingsPage() {
     <div className="p-6 space-y-6 max-w-4xl">
       <div>
         <h1 className="text-2xl font-bold text-white">Settings & Configuration</h1>
-        <p className="text-gray-400 text-sm mt-1">Manage credentials, Newton School connection, and batch worker limits</p>
+        <p className="text-gray-400 text-sm mt-1">Manage your Newton School connection and batch worker limits</p>
       </div>
 
       {/* Auth Status Card */}
@@ -183,12 +118,12 @@ export function SettingsPage() {
             <div className="p-4 rounded-xl bg-yellow-500/10 border border-yellow-500/30 flex items-center gap-3">
               <AlertTriangle className="w-5 h-5 text-yellow-400 flex-shrink-0" />
               <div className="text-xs text-yellow-200">
-                Not connected. Enter your Newton School credentials below to discover your accessible courses.
+                Not connected. Sign in through Newton's visible browser page; Newton handles your password, SSO, and 2FA.
               </div>
             </div>
           )}
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-end">
             <div>
               <label className="text-xs font-medium text-gray-300 block mb-1">Newton Account Email</label>
               <Input
@@ -198,38 +133,9 @@ export function SettingsPage() {
                 onChange={(e) => setSettings({ ...settings, newtonEmail: e.target.value })}
               />
             </div>
-            <div>
-              <label className="text-xs font-medium text-gray-300 block mb-1">Newton Password</label>
-              <Input
-                type="password"
-                placeholder="••••••••••••"
-                value={settings.newtonPassword}
-                onChange={(e) => setSettings({ ...settings, newtonPassword: e.target.value })}
-              />
-            </div>
-          </div>
-
-          <div className="flex gap-2">
-            <Button size="sm" onClick={handleNewtonLogin} loading={loggingIn}>
+            <Button size="sm" onClick={() => router.push("/login")}>
               <LogIn className="w-3.5 h-3.5" />
-              Direct Sign In
-            </Button>
-          </div>
-
-          {/* Browser Cookie Import Option */}
-          <div className="border-t border-white/10 pt-4 space-y-2">
-            <h4 className="text-xs font-medium text-gray-300">Alternative: Import Browser Session Cookies (JSON)</h4>
-            <p className="text-[11px] text-gray-500">
-              If your Newton School account uses Google SSO or 2FA, copy your session cookies exported from your browser:
-            </p>
-            <textarea
-              className="w-full h-20 rounded-lg border border-white/10 bg-white/5 p-2 text-xs font-mono text-gray-300 focus:outline-none focus:ring-1 focus:ring-newton-primary"
-              placeholder='[{"name": "session_id", "value": "..."}, ...]'
-              value={settings.cookieJson}
-              onChange={(e) => setSettings({ ...settings, cookieJson: e.target.value })}
-            />
-            <Button variant="outline" size="sm" onClick={handleImportCookies} loading={importingCookie}>
-              Import Cookies
+              Sign In in Newton Browser
             </Button>
           </div>
         </CardContent>
@@ -243,27 +149,18 @@ export function SettingsPage() {
             AI & Model Configuration
           </CardTitle>
           <CardDescription>
-            Configure OpenAI or compatible API keys and models for solution & test case generation
+            Configure the AI provider with environment variables for solution and test case generation
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
+          <p className="text-sm text-gray-400">
+            Set <code>GROQ_API_KEY</code> in <code>.env.local</code>. API keys are not stored in the database.
+            OpenAI is also supported with <code>AI_PROVIDER=openai</code> and <code>OPENAI_API_KEY</code>.
+          </p>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
-              <label className="text-xs font-medium text-gray-300 block mb-1">OpenAI API Key</label>
-              <Input
-                type="password"
-                placeholder="sk-..."
-                value={settings.openaiApiKey}
-                onChange={(e) => setSettings({ ...settings, openaiApiKey: e.target.value })}
-              />
-            </div>
-            <div>
-              <label className="text-xs font-medium text-gray-300 block mb-1">AI Model</label>
-              <Input
-                placeholder="gpt-4o"
-                value={settings.aiModel}
-                onChange={(e) => setSettings({ ...settings, aiModel: e.target.value })}
-              />
+              <label className="text-xs font-medium text-gray-300 block mb-1">Active AI Model</label>
+              <p className="text-sm text-gray-300 py-2">{settings.aiModel}</p>
             </div>
           </div>
         </CardContent>

@@ -18,6 +18,7 @@ import {
   ChevronRight,
   Zap,
   LogOut,
+  Bot,
 } from "lucide-react";
 import { useState } from "react";
 
@@ -26,6 +27,7 @@ const navItems = [
   { href: "/subjects", icon: BookOpen, label: "Subjects" },
   { href: "/assignments", icon: FileText, label: "Assignments" },
   { href: "/questions", icon: HelpCircle, label: "Question Bank" },
+  { href: "/agent", icon: Bot, label: "Browser Agent" },
   { href: "/solutions", icon: Sparkles, label: "AI Solutions" },
   { href: "/batch", icon: Layers, label: "Batch Processing" },
   { href: "/queue", icon: ListTodo, label: "Processing Queue" },

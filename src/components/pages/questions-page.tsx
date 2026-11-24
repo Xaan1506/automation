@@ -19,8 +19,19 @@ interface Question {
   externalId: string;
   title: string;
   description: string;
+  questionUrl: string;
   language: string | null;
   difficulty: string | null;
+  portalStatus: string | null;
+  scoreLabel: string | null;
+  topics: string | null;
+  inputFormat: string | null;
+  outputFormat: string | null;
+  constraints: string | null;
+  sampleInput: string | null;
+  sampleOutput: string | null;
+  examples: string | null;
+  starterCode: string | null;
   processingStatus: string;
   discoveredAt: string;
   lastProcessedAt: string | null;
@@ -38,6 +49,18 @@ interface Question {
     title: string;
     subject: { name: string; code: string | null };
   };
+}
+
+function parseTopicLabels(value: string | null): string[] {
+  if (!value) return [];
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return Array.isArray(parsed)
+      ? parsed.filter((label): label is string => typeof label === "string")
+      : [];
+  } catch {
+    return [];
+  }
 }
 
 export function QuestionsPage() {
@@ -172,6 +195,16 @@ export function QuestionsPage() {
             const validPct = solution?.totalTestCases
               ? Math.round((solution.passedTestCases / solution.totalTestCases) * 100)
               : 0;
+            const topicLabels = parseTopicLabels(question.topics);
+            const problemDetails = [
+              ["Input format", question.inputFormat],
+              ["Output format", question.outputFormat],
+              ["Constraints", question.constraints],
+              ["Sample input", question.sampleInput],
+              ["Sample output", question.sampleOutput],
+              ["Examples", question.examples],
+              ["Starter code", question.starterCode],
+            ].filter((detail): detail is [string, string] => Boolean(detail[1]));
 
             return (
               <Card
@@ -202,6 +235,16 @@ export function QuestionsPage() {
                               {question.language}
                             </span>
                           )}
+                          {question.difficulty && (
+                            <span className="text-xs text-gray-300 bg-white/5 px-2 py-0.5 rounded">
+                              {question.difficulty}
+                            </span>
+                          )}
+                          {question.scoreLabel && (
+                            <span className="text-xs text-gray-400 bg-white/5 px-2 py-0.5 rounded">
+                              {question.scoreLabel}
+                            </span>
+                          )}
                           <StatusBadge status={question.processingStatus} size="sm" />
                           <ChevronRight
                             className={`w-4 h-4 text-gray-500 transition-transform ${isExpanded ? "rotate-90" : ""}`}
@@ -214,6 +257,16 @@ export function QuestionsPage() {
                       </p>
 
                       <div className="flex items-center gap-4 mt-2">
+                        {question.portalStatus && (
+                          <span className="text-[10px] text-gray-500">
+                            Portal status: {question.portalStatus}
+                          </span>
+                        )}
+                        {topicLabels.map((topic) => (
+                          <span key={topic} className="text-[10px] text-newton-primary">
+                            {topic}
+                          </span>
+                        ))}
                         <span className="text-[10px] text-gray-500">
                           {question._count.solutions} solution(s)
                         </span>
@@ -249,7 +302,36 @@ export function QuestionsPage() {
                     </div>
                   </div>
 
-                  {/* Expanded: show solution code */}
+                  {isExpanded && (
+                    <div className="mt-4 border-t border-white/10 pt-4 animate-fade-in space-y-4">
+                      <div>
+                        <div className="flex items-center justify-between gap-3 mb-2">
+                          <span className="text-sm font-medium text-white">Visible problem statement</span>
+                          <a
+                            href={question.questionUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-xs text-newton-primary hover:underline"
+                          >
+                            Open in Newton
+                          </a>
+                        </div>
+                        <pre className="whitespace-pre-wrap bg-black/30 rounded-lg p-4 text-xs text-gray-300 font-sans max-h-80 overflow-y-auto">
+                          {question.description}
+                        </pre>
+                      </div>
+                      {problemDetails.map(([label, value]) => (
+                        <div key={label}>
+                          <div className="text-xs font-medium text-gray-400 mb-1">{label}</div>
+                          <pre className="whitespace-pre-wrap bg-black/30 rounded-lg p-3 text-xs text-gray-300 font-mono overflow-x-auto">
+                            {value}
+                          </pre>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Expanded: show locally generated solution code */}
                   {isExpanded && solution && (
                     <div className="mt-4 border-t border-white/10 pt-4 animate-fade-in">
                       <div className="flex items-center gap-2 mb-2">

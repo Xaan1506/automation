@@ -7,7 +7,7 @@ An intelligent, multi-subject batch processing and assignment solving platform f
 ## 🌟 Key Features
 
 ### 1. Subject Discovery
-- **Dynamic Course Scraping**: Authenticates with Newton School (`https://learn.newtonschool.co`) using direct credentials or imported browser session cookies.
+- **Dynamic Course Scraping**: Authenticates with Newton School (`https://my.newtonschool.co`) through a visible browser session, including Newton-managed SSO and 2FA.
 - **Subject Persistence**: Stores courses with unique IDs, course URLs, descriptions, assignment counts, question counts, discovery statuses, and last scanned timestamps.
 - **Initial Test Subject**: *Advanced Software Development (ASD)* is fully supported and dynamically extracted (not hardcoded). Also supports *Data Engineering (DE)*, *Algorithms and Data Structures (ADA)*, *Mathematics 3*, and any user-enrolled course.
 
@@ -54,6 +54,13 @@ An intelligent, multi-subject batch processing and assignment solving platform f
 - Validates execution against public test cases and AI-generated test suites.
 - Results retain exact Subject and Assignment lineage for filtering and auditing.
 
+### 7. Read-Only Browser Agent (`/agent`)
+- Accepts natural-language instructions and plans only from section/question labels visible in the authenticated Newton UI.
+- Reuses the encrypted Playwright session and existing visible-page scanner to navigate sections, open questions, extract visible statements, and return to assignment groups.
+- Shows verified action history, current URL/section/assignment, progress, and a live screenshot; supports pause, resume, and cancel.
+- Screenshots remain local to the app and are not sent to the AI planner. The planner receives only the task and sanitized visible labels.
+- No hidden tests, restricted endpoints, assignment edits, or submissions are available to the agent.
+
 ---
 
 ## 🗄️ Database Architecture (Prisma + SQLite)
@@ -71,6 +78,9 @@ Subject
 Batch
   ├── BatchAssignment (many-to-many with Assignment)
   └── ProcessingJob (1-to-many)
+
+AgentTask
+  └── AgentAction (1-to-many verified read-only browser actions)
 ```
 
 ---
@@ -85,19 +95,35 @@ npm install
 ### 2. Configure Environment
 Create `.env.local`:
 ```env
-NEWTON_EMAIL="your_email@newtonschool.co"
-NEWTON_PASSWORD="your_password"
-NEWTON_BASE_URL="https://learn.newtonschool.co"
-OPENAI_API_KEY="sk-..."
-AI_MODEL="gpt-4o"
+NEWTON_BASE_URL="https://my.newtonschool.co"
+NEWTON_COURSE_URL="https://my.newtonschool.co/course/<course-id>/details"
+NEWTON_LOGIN_URL="https://my.newtonschool.co/login"
+AI_PROVIDER="groq"
+GROQ_API_KEY="gsk_..."
+AI_MODEL="llama-3.3-70b-versatile"
 DATABASE_URL="file:./dev.db"
 ```
+
+Groq uses its OpenAI-compatible endpoint automatically. For OpenAI, set
+`AI_PROVIDER="openai"` and `OPENAI_API_KEY`; API keys belong in the environment file
+and are not stored in the application database. The default Groq model is
+`llama-3.3-70b-versatile`.
+
+Newton sign-in is completed manually in a visible Chromium browser. The app does not collect
+Newton passwords or import pasted cookies. After you land on your Newton courses or dashboard,
+use **Verify Newton Session** to check the authenticated page before saving the session. The
+Playwright storage state is encrypted in the database with a local 32-byte key stored in
+`.newton-session-key` (file mode `0600`, excluded from Git). Install Chromium once with
+`npx playwright install chromium` if needed. `NEWTON_LOGIN_URL` is the Newton sign-in page (`/login`);
+`NEWTON_COURSE_URL` is the enrolled course dashboard opened after authentication and used for
+section discovery. Keep these URLs separate when configuring a different Newton sign-in entry.
 
 ### 3. Initialize Database
 ```bash
 npm run db:push
-npm run db:seed  # Seeds initial test subjects (ASD, DE, ADA, Mathematics 3)
+npm run db:seed  # Intentionally does not create synthetic assignment data
 ```
+Discover real sections from the authenticated Newton portal through `/subjects`.
 
 ### 4. Start Development Server
 ```bash
@@ -109,12 +135,9 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 
 ## 🧪 Testing the ASD Scenario
 
-1. Navigate to **Subjects** (`/subjects`).
-2. Verify **Advanced Software Development (ASD)** is displayed with its metrics.
-3. Select ASD (or use *Select All*).
-4. Click **View Assignments** (`/assignments`) to review available assignments.
-5. Select an assignment (e.g., `ASD Assignment 1`).
-6. Click **Create Batch** (`/batch/new`).
-7. Review the batch summary and confirm execution.
-8. Monitor real-time status in the **Processing Queue** (`/queue`).
-9. Inspect code drafts, time complexities, and test results in **AI Solutions** (`/solutions`).
+1. Sign in through the visible Newton browser and verify the saved session.
+2. Discover sections at **Subjects** (`/subjects`) if they are not already listed.
+3. Open **Browser Agent** (`/agent`) and submit:
+   `Open ASD - Hopper, find all assignment groups, open each coding question, extract the visible problem statements and organise them by assignment.`
+4. Review the live screenshot, verified action history, and completion counts.
+5. Confirm the results in **Assignments** (`/assignments`) and **Question Bank** (`/questions`).

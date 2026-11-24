@@ -1,30 +1,11 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { prisma } from '@/lib/prisma';
-import { saveSession } from '@/lib/newton-scraper';
+import { NextResponse } from 'next/server';
 
 /**
- * POST /api/auth/session - Import session cookies from browser (manual login)
+ * POST /api/auth/session - Manual cookie import is intentionally disabled
  */
-export async function POST(request: NextRequest) {
-  try {
-    const body = await request.json();
-    const { email, cookies } = body;
-
-    if (!email || !cookies) {
-      return NextResponse.json({ error: 'Email and cookies are required' }, { status: 400 });
-    }
-
-    const sessionToken = await saveSession(email, cookies);
-
-    const response = NextResponse.json({ success: true, message: 'Session imported' });
-    response.cookies.set('newton_session', sessionToken, {
-      httpOnly: true,
-      path: '/',
-      sameSite: 'lax',
-      maxAge: 60 * 60 * 24 * 7,
-    });
-    return response;
-  } catch (err) {
-    return NextResponse.json({ error: String(err) }, { status: 500 });
-  }
+export async function POST() {
+  return NextResponse.json(
+    { error: 'Manual cookie import is disabled. Use visible browser login instead.' },
+    { status: 410 }
+  );
 }

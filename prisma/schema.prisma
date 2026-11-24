@@ -15,14 +15,14 @@ datasource db {
 // ─────────────────────────────────────────────────────────────────────────────
 
 model NewtonSession {
-  id           String   @id @default(cuid())
-  email        String   @unique
-  sessionToken String   @unique
-  cookieData   String   // JSON-serialized cookies
-  isActive     Boolean  @default(true)
+  id           String    @id @default(cuid())
+  email        String    @unique
+  sessionToken String    @unique
+  cookieData   String // Encrypted Playwright storage state
+  isActive     Boolean   @default(true)
   expiresAt    DateTime?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -30,17 +30,18 @@ model NewtonSession {
 // ─────────────────────────────────────────────────────────────────────────────
 
 model Subject {
-  id               String          @id @default(cuid())
-  externalId       String          @unique  // Newton's course ID
-  name             String
-  code             String?         // e.g., "ASD", "DE"
-  courseUrl        String
-  description      String?
-  imageUrl         String?
-  discoveryStatus  String          @default("DISCOVERED")
-  lastScannedAt    DateTime?
-  createdAt        DateTime        @default(now())
-  updatedAt        DateTime        @updatedAt
+  id              String    @id @default(cuid())
+  externalId      String    @unique // Newton's course ID
+  name            String
+  code            String? // e.g., "ASD", "DE"
+  courseUrl       String
+  portalCourseId  String?
+  description     String?
+  imageUrl        String?
+  discoveryStatus String    @default("DISCOVERED")
+  lastScannedAt   DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 
   assignments      Assignment[]
   batchAssignments BatchAssignment[]
@@ -69,20 +70,24 @@ model SubjectStats {
 // ─────────────────────────────────────────────────────────────────────────────
 
 model Assignment {
-  id               String           @id @default(cuid())
-  externalId       String           // Newton's assignment ID
+  id               String    @id @default(cuid())
+  externalId       String // Newton's assignment ID
   subjectId        String
   title            String
   assignmentUrl    String
+  sectionName      String?
+  groupType        String?
+  releaseLabel     String?
+  deadlineLabel    String?
   description      String?
   dueDate          DateTime?
-  processingStatus String           @default("NOT_PROCESSED")
-  discoveredAt     DateTime         @default(now())
+  processingStatus String    @default("NOT_PROCESSED")
+  discoveredAt     DateTime  @default(now())
   lastProcessedAt  DateTime?
-  createdAt        DateTime         @default(now())
-  updatedAt        DateTime         @updatedAt
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 
-  subject          Subject          @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  subject          Subject           @relation(fields: [subjectId], references: [id], onDelete: Cascade)
   questions        Question[]
   batchAssignments BatchAssignment[]
 
@@ -96,30 +101,36 @@ model Assignment {
 // ─────────────────────────────────────────────────────────────────────────────
 
 model Question {
-  id               String          @id @default(cuid())
-  externalId       String          // Newton's question ID
+  id               String    @id @default(cuid())
+  externalId       String // Newton's question ID
   assignmentId     String
   title            String
-  description      String          // Full problem statement
-  contentHash      String          // SHA-256 of content to detect duplicates
+  description      String // Full problem statement
+  contentHash      String // SHA-256 of content to detect duplicates
   inputFormat      String?
   outputFormat     String?
   constraints      String?
   sampleInput      String?
   sampleOutput     String?
-  language         String?         // "python", "javascript", "java", etc.
+  language         String? // "python", "javascript", "java", etc.
   difficulty       String?
+  portalStatus     String?
+  scoreLabel       String?
+  topics           String? // JSON-serialized portal topic labels
+  solvedByLabel    String?
+  examples         String?
+  starterCode      String?
   questionUrl      String
-  processingStatus String          @default("DISCOVERED")
-  discoveredAt     DateTime        @default(now())
+  processingStatus String    @default("DISCOVERED")
+  discoveredAt     DateTime  @default(now())
   lastProcessedAt  DateTime?
-  createdAt        DateTime        @default(now())
-  updatedAt        DateTime        @updatedAt
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 
-  assignment       Assignment      @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
-  solutions        Solution[]
-  testCases        TestCase[]
-  processingJobs   ProcessingJob[]
+  assignment     Assignment      @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  solutions      Solution[]
+  testCases      TestCase[]
+  processingJobs ProcessingJob[]
 
   @@unique([assignmentId, externalId])
   @@unique([contentHash])
@@ -133,26 +144,26 @@ model Question {
 // ─────────────────────────────────────────────────────────────────────────────
 
 model Solution {
-  id              String          @id @default(cuid())
-  questionId      String
-  code            String
-  language        String
-  explanation     String?
-  timeComplexity  String?
-  spaceComplexity String?
-  aiModel         String?
-  promptVersion   String?
-  validationStatus String         @default("PENDING")
+  id               String   @id @default(cuid())
+  questionId       String
+  code             String
+  language         String
+  explanation      String?
+  timeComplexity   String?
+  spaceComplexity  String?
+  aiModel          String?
+  promptVersion    String?
+  validationStatus String   @default("PENDING")
   validationOutput String?
-  passedTestCases  Int            @default(0)
-  totalTestCases   Int            @default(0)
+  passedTestCases  Int      @default(0)
+  totalTestCases   Int      @default(0)
   executionTimeMs  Int?
-  isPreferred      Boolean        @default(false)
-  version          Int            @default(1)
-  createdAt        DateTime       @default(now())
-  updatedAt        DateTime       @updatedAt
+  isPreferred      Boolean  @default(false)
+  version          Int      @default(1)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 
-  question         Question       @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  question Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
 
   @@index([questionId])
   @@index([validationStatus])
@@ -163,15 +174,15 @@ model Solution {
 // ─────────────────────────────────────────────────────────────────────────────
 
 model TestCase {
-  id          String       @id @default(cuid())
-  questionId  String
-  input       String
-  expected    String
-  isPublic    Boolean      @default(false)  // from Newton vs AI-generated
-  source      String       @default("ai")   // "newton" | "ai" | "manual"
-  createdAt   DateTime     @default(now())
+  id         String   @id @default(cuid())
+  questionId String
+  input      String
+  expected   String
+  isPublic   Boolean  @default(false) // from Newton vs AI-generated
+  source     String   @default("ai") // "newton" | "ai" | "manual"
+  createdAt  DateTime @default(now())
 
-  question    Question     @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  question Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
 
   @@index([questionId])
 }
@@ -181,37 +192,37 @@ model TestCase {
 // ─────────────────────────────────────────────────────────────────────────────
 
 model Batch {
-  id               String        @id @default(cuid())
+  id               String    @id @default(cuid())
   name             String
-  status           String        @default("PENDING")
-  totalAssignments Int           @default(0)
-  totalQuestions   Int           @default(0)
-  processedCount   Int           @default(0)
-  failedCount      Int           @default(0)
-  config           String?       // JSON: concurrency settings, AI model, etc.
+  status           String    @default("PENDING")
+  totalAssignments Int       @default(0)
+  totalQuestions   Int       @default(0)
+  processedCount   Int       @default(0)
+  failedCount      Int       @default(0)
+  config           String? // JSON: concurrency settings, AI model, etc.
   startedAt        DateTime?
   completedAt      DateTime?
-  createdAt        DateTime      @default(now())
-  updatedAt        DateTime      @updatedAt
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 
-  assignments      BatchAssignment[]
-  jobs             ProcessingJob[]
+  assignments BatchAssignment[]
+  jobs        ProcessingJob[]
 
   @@index([status])
 }
 
 model BatchAssignment {
-  id           String     @id @default(cuid())
+  id           String    @id @default(cuid())
   batchId      String
   assignmentId String
   subjectId    String
-  status       String     @default("PENDING")
+  status       String    @default("PENDING")
   processedAt  DateTime?
-  createdAt    DateTime   @default(now())
+  createdAt    DateTime  @default(now())
 
-  batch        Batch      @relation(fields: [batchId], references: [id], onDelete: Cascade)
-  assignment   Assignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
-  subject      Subject    @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  batch      Batch      @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  assignment Assignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  subject    Subject    @relation(fields: [subjectId], references: [id], onDelete: Cascade)
 
   @@unique([batchId, assignmentId])
   @@index([batchId])
@@ -223,24 +234,24 @@ model BatchAssignment {
 // ─────────────────────────────────────────────────────────────────────────────
 
 model ProcessingJob {
-  id            String     @id @default(cuid())
-  batchId       String?
-  questionId    String
-  stage         String     @default("QUEUED")
-  status        String     @default("PENDING")
-  retryCount    Int        @default(0)
-  maxRetries    Int        @default(3)
-  priority      Int        @default(5)
-  errorMessage  String?
-  errorDetails  String?    // JSON
-  startedAt     DateTime?
-  completedAt   DateTime?
-  nextRetryAt   DateTime?
-  createdAt     DateTime   @default(now())
-  updatedAt     DateTime   @updatedAt
+  id           String    @id @default(cuid())
+  batchId      String?
+  questionId   String
+  stage        String    @default("QUEUED")
+  status       String    @default("PENDING")
+  retryCount   Int       @default(0)
+  maxRetries   Int       @default(3)
+  priority     Int       @default(5)
+  errorMessage String?
+  errorDetails String? // JSON
+  startedAt    DateTime?
+  completedAt  DateTime?
+  nextRetryAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
 
-  batch         Batch?     @relation(fields: [batchId], references: [id], onDelete: SetNull)
-  question      Question   @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  batch    Batch?   @relation(fields: [batchId], references: [id], onDelete: SetNull)
+  question Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
 
   @@index([batchId])
   @@index([questionId])
@@ -254,8 +265,49 @@ model ProcessingJob {
 // ─────────────────────────────────────────────────────────────────────────────
 
 model AppSettings {
-  id    String @id @default("default")
-  data  String // JSON blob for all settings
+  id   String @id @default("default")
+  data String // JSON blob for all settings
 
   updatedAt DateTime @updatedAt
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// READ-ONLY BROWSER AGENT
+// ─────────────────────────────────────────────────────────────────────────────
+
+model AgentTask {
+  id                String        @id @default(cuid())
+  ownerEmail        String
+  instruction       String
+  status            String        @default("QUEUED")
+  subjectId         String?
+  currentUrl        String?
+  currentSubject    String?
+  currentAssignment String?
+  progress          Int           @default(0)
+  total             Int           @default(0)
+  result            String?
+  errorMessage      String?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+  actions           AgentAction[]
+
+  @@index([ownerEmail, status, updatedAt])
+}
+
+model AgentAction {
+  id          String    @id @default(cuid())
+  taskId      String
+  sequence    Int
+  action      String
+  summary     String
+  status      String
+  verified    Boolean   @default(false)
+  currentUrl  String?
+  startedAt   DateTime  @default(now())
+  completedAt DateTime?
+  task        AgentTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@unique([taskId, sequence])
+  @@index([taskId, startedAt])
 }

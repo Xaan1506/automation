@@ -1,13 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import {
-  upsertSubject,
-  parseSubjectsFromApiResponse,
-  saveSession,
-} from '@/lib/newton-scraper';
+import { discoverNewtonSections, NewtonPortalError } from '@/lib/newton-portal';
 import { isSubjectStatus } from '@/lib/constants';
-
-const NEWTON_BASE_URL = process.env.NEWTON_BASE_URL || 'https://learn.newtonschool.co';
 
 /**
  * GET /api/subjects - List all discovered subjects
@@ -45,88 +39,21 @@ export async function GET(request: NextRequest) {
 }
 
 /**
- * POST /api/subjects - Trigger subject discovery from Newton
+ * POST /api/subjects - Discover Newton sections through the authenticated portal UI
  */
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json().catch(() => ({}));
-    const { email, forceRefresh } = body;
-
-    // Try to fetch subjects from Newton's API
-    // Newton uses JWT tokens after login; we'll use the saved session
-    const session = await prisma.newtonSession.findFirst({
-      where: { email: email || { not: '' }, isActive: true },
-      orderBy: { updatedAt: 'desc' },
+    const subjects = await discoverNewtonSections();
+    return NextResponse.json({
+      discoveredSubjects: subjects.length,
+      subjects: subjects.map(({ name, code }) => ({ name, code })),
+      message: `Discovered ${subjects.length} Newton section filters`,
     });
-
-    if (!session) {
-      return NextResponse.json(
-        { error: 'No active Newton session. Please authenticate first.' },
-        { status: 401 }
-      );
-    }
-
-    const cookies = JSON.parse(session.cookieData);
-    const cookieHeader = cookies
-      .map((c: { name: string; value: string }) => `${c.name}=${c.value}`)
-      .join('; ');
-
-    // Attempt multiple Newton API endpoints
-    const endpoints = [
-      `${NEWTON_BASE_URL}/api/v1/courses`,
-      `${NEWTON_BASE_URL}/api/v1/my-courses`,
-      `${NEWTON_BASE_URL}/api/courses`,
-      `${NEWTON_BASE_URL}/api/student/courses`,
-      `${NEWTON_BASE_URL}/api/v2/student/courses`,
-    ];
-
-    let discoveredSubjects = 0;
-    let lastError = '';
-
-    for (const endpoint of endpoints) {
-      try {
-        const response = await fetch(endpoint, {
-          headers: {
-            Cookie: cookieHeader,
-            Accept: 'application/json',
-            'Content-Type': 'application/json',
-            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
-          },
-          signal: AbortSignal.timeout(10000),
-        });
-
-        if (!response.ok) continue;
-
-        const data = await response.json();
-        const subjects = parseSubjectsFromApiResponse(data);
-
-        if (subjects.length > 0) {
-          for (const subject of subjects) {
-            await upsertSubject(subject);
-            discoveredSubjects++;
-          }
-          break;
-        }
-      } catch (err) {
-        lastError = String(err);
-        continue;
-      }
-    }
-
-    if (discoveredSubjects === 0) {
-      return NextResponse.json(
-        {
-          message: 'Could not auto-discover subjects. Use manual scraping or check credentials.',
-          error: lastError,
-          discoveredSubjects: 0,
-        },
-        { status: 200 }
-      );
-    }
-
-    return NextResponse.json({ discoveredSubjects, message: 'Discovery complete' });
-  } catch (err) {
-    console.error('POST /api/subjects error:', err);
-    return NextResponse.json({ error: String(err) }, { status: 500 });
+  } catch (error) {
+    const message = error instanceof NewtonPortalError
+      ? error.message
+      : 'Newton section discovery failed.';
+    const status = /session/i.test(message) ? 401 : 502;
+    return NextResponse.json({ error: message }, { status });
   }
 }

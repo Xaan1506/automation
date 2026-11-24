@@ -7,7 +7,7 @@ import type { NextRequest } from 'next/server';
  * Rules:
  * 1. Static files and API routes bypass middleware.
  * 2. Unauthenticated requests to protected dashboard routes are redirected to /login.
- * 3. Authenticated requests to /login are redirected to / (dashboard).
+ * 3. Session validity is checked by the authentication API, not by cookie presence alone.
  * 4. Ensures zero redirect loops on / and /login.
  */
 export function middleware(request: NextRequest) {
@@ -17,11 +17,6 @@ export function middleware(request: NextRequest) {
 
   // Handle login route
   if (pathname === '/login') {
-    if (isAuthenticated) {
-      // Authenticated users trying to access login are sent to dashboard
-      return NextResponse.redirect(new URL('/', request.url));
-    }
-    // Unauthenticated users can access login
     return NextResponse.next();
   }
 

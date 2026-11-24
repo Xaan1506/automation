@@ -40,6 +40,12 @@ export function SubjectsPage() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [scanningId, setScanningId] = useState<string | null>(null);
+  const [scanProgress, setScanProgress] = useState<{
+    subjectId: string;
+    message: string;
+    completed: number;
+    total: number;
+  } | null>(null);
 
   const {
     selectedSubjectIds,
@@ -98,13 +104,66 @@ export function SubjectsPage() {
 
   const handleRescan = async (subjectId: string) => {
     setScanningId(subjectId);
+    setScanProgress({ subjectId, message: "Starting Newton portal scan", completed: 0, total: 0 });
     try {
       const res = await fetch(`/api/subjects/${subjectId}`, { method: "POST" });
-      const data = await res.json();
-      if (data.error) toast.error(data.error);
-      else { toast.success("Subject rescanned"); await fetchSubjects(); }
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || `Newton scan failed (${res.status})`);
+      }
+      if (!res.body) throw new Error("Newton scan did not return progress data.");
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      const outcome: {
+        result?: { assignmentsFound: number; questionsFound: number; warnings: string[] };
+        error?: string;
+      } = {};
+
+      const consumeLine = (line: string) => {
+        if (!line.trim()) return;
+        const event = JSON.parse(line);
+        if (event.type === "progress") {
+          setScanProgress({
+            subjectId,
+            message: event.message,
+            completed: event.completed,
+            total: event.total,
+          });
+        } else if (event.type === "complete") {
+          outcome.result = event.result;
+        } else if (event.type === "error") {
+          outcome.error = event.error;
+        }
+      };
+
+      while (true) {
+        const { done, value } = await reader.read();
+        buffer += decoder.decode(value, { stream: !done });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+        lines.forEach(consumeLine);
+        if (done) break;
+      }
+      consumeLine(buffer);
+
+      if (outcome.error) throw new Error(outcome.error);
+      const result = outcome.result;
+      if (!result) throw new Error("Newton scan ended without a completion result.");
+      if (result.warnings.length > 0) {
+        toast.error(`Scan saved partially: ${result.warnings[0]}`);
+      } else {
+        toast.success(
+          `Found ${result.assignmentsFound} groups and ${result.questionsFound} questions`
+        );
+      }
+      await fetchSubjects();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Newton scan failed.");
     } finally {
       setScanningId(null);
+      setScanProgress(null);
     }
   };
 
@@ -131,6 +190,25 @@ export function SubjectsPage() {
           </Button>
         </div>
       </div>
+
+      {scanProgress && (
+        <Card>
+          <CardContent className="space-y-2 py-3">
+            <div className="flex justify-between gap-3 text-xs text-gray-300">
+              <span>{scanProgress.message}</span>
+              {scanProgress.total > 0 && (
+                <span>{scanProgress.completed}/{scanProgress.total}</span>
+              )}
+            </div>
+            <Progress
+              value={scanProgress.total > 0
+                ? (scanProgress.completed / scanProgress.total) * 100
+                : 8}
+              className="h-1.5"
+            />
+          </CardContent>
+        </Card>
+      )}
 
       {/* Selection toolbar */}
       {selectedCount > 0 && (

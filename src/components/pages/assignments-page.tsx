@@ -20,6 +20,9 @@ interface Assignment {
   externalId: string;
   title: string;
   assignmentUrl: string;
+  groupType: string | null;
+  releaseLabel: string | null;
+  deadlineLabel: string | null;
   description: string | null;
   processingStatus: string;
   discoveredAt: string;
@@ -286,9 +289,21 @@ export function AssignmentsPage() {
                       <span className="text-lg">{STATUS_ICONS[assignment.processingStatus] || "⚪"}</span>
                       <div className="min-w-0">
                         <div className="font-medium text-white text-sm truncate">{assignment.title}</div>
-                        <div className="text-[11px] text-gray-500">ID: {assignment.externalId}</div>
+                        {assignment.groupType && (
+                          <span className="inline-block text-[10px] text-newton-primary bg-newton-primary/10 px-1.5 py-0.5 rounded mt-1">
+                            {assignment.groupType}
+                          </span>
+                        )}
                       </div>
                     </div>
+
+                    {(assignment.releaseLabel || assignment.deadlineLabel) && (
+                      <div className="text-[11px] text-gray-500 mb-3">
+                        {assignment.releaseLabel && <span>Release: {assignment.releaseLabel}</span>}
+                        {assignment.releaseLabel && assignment.deadlineLabel && <span>{" · "}</span>}
+                        {assignment.deadlineLabel && <span>Deadline: {assignment.deadlineLabel}</span>}
+                      </div>
+                    )}
 
                     <div className="flex items-center gap-4 mb-3">
                       <div className="flex items-center gap-1 text-xs text-gray-400">
